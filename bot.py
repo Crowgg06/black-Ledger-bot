@@ -35,6 +35,7 @@ from aiogram.types import (
     InlineKeyboardMarkup,
     Message,
 )
+from aiohttp import web
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -804,6 +805,29 @@ async def cmd_confirmreset(message: Message):
     await message.answer("Все данные удалены.")
 
 
+# ----------------------------------------------- keep-alive web server --
+# Render (и некоторые другие бесплатные хостинги) дают бесплатный план
+# только для "Web Service" — то есть процесса, который слушает HTTP-порт.
+# Сам бот работает через long polling (ему не нужен HTTP), поэтому мы
+# параллельно поднимаем крошечный веб-сервер-пустышку: он отвечает "OK" на
+# любой запрос и нужен только для того, чтобы хостинг видел "живой" сервис
+# и не усыплял его. Будим его снаружи через пинг-сервис (см. README.md).
+
+async def run_keepalive_server():
+    port = int(os.getenv("PORT", "8080"))
+
+    async def handle(_request):
+        return web.Response(text="Black Ledger bot is running")
+
+    app = web.Application()
+    app.router.add_get("/", handle)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "0.0.0.0", port)
+    await site.start()
+    log.info("Keep-alive сервер слушает порт %s", port)
+
+
 # ------------------------------------------------------------------- main --
 
 async def main():
@@ -815,6 +839,9 @@ async def main():
     dp.include_router(router)
     log.info("Бот запущен")
     await bot.delete_webhook(drop_pending_updates=True)
+    if os.getenv("PORT"):
+        # Запущено на хостинге как Web Service — поднимаем keep-alive сервер.
+        await run_keepalive_server()
     await dp.start_polling(bot)
 
 
